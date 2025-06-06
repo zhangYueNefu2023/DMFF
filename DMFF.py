@@ -24,7 +24,7 @@ sns.set_theme(style="whitegrid", context="paper", font_scale=1.3)
 contrast_palette = sns.color_palette("Set2", n_colors=8)
 
 ########################################
-# 0. 可视化蛋白质网络函数
+# 0. Visualizing protein PPI networks
 ########################################
 def visualize_protein_network(edge_index, n_nodes):
     edges = edge_index.cpu().numpy().T
@@ -42,7 +42,7 @@ def visualize_protein_network(edge_index, n_nodes):
     plt.show()
 
 ########################################
-# 1. 数据集构建
+# 1. Dataset construction
 ########################################
 class OmicsSurvivalDataset(Dataset):
     def __init__(self, mirna_file, protein_file, star_tpm_file, clinical_file, survival_file):
@@ -84,7 +84,7 @@ class OmicsSurvivalDataset(Dataset):
                 'duration': duration, 'event': event}
 
 ########################################
-# 2. 模型构建
+# 2. Model building
 ########################################
 class OmicsAutoencoder(nn.Module):
     def __init__(self, input_dim, latent_dim):
@@ -108,16 +108,14 @@ class SurvivalHead(nn.Module):
     def __init__(self, latent_dim):
         super(SurvivalHead, self).__init__()
 
-        # 增加更多的隐藏层（MLP结构）
-        self.fc1 = nn.Linear(latent_dim, 512)  # 第一个隐藏层
-        self.fc2 = nn.Linear(512, 256)  # 第二个隐藏层
-        self.fc3 = nn.Linear(256, 128)  # 第三个隐藏层
-        self.fc4 = nn.Linear(128, 1)  # 输出层
+        
+        self.fc1 = nn.Linear(latent_dim, 512)  
+        self.fc2 = nn.Linear(512, 256)  
+        self.fc3 = nn.Linear(256, 128)  
+        self.fc4 = nn.Linear(128, 1)  
 
-        # 激活函数
         self.relu = nn.ReLU()
 
-        # Dropout正则化
         self.dropout = nn.Dropout(p=0.5)
 
         # Batch Normalization
@@ -126,11 +124,11 @@ class SurvivalHead(nn.Module):
         self.batch_norm3 = nn.BatchNorm1d(128)
 
     def forward(self, x):
-        # 通过各个隐藏层并加入非线性激活
+        # Pass through each hidden layer and add nonlinear activation
         x = self.fc1(x)
-        x = self.batch_norm1(x)  # 批归一化
+        x = self.batch_norm1(x)  
         x = self.relu(x)
-        x = self.dropout(x)  # Dropout正则化
+        x = self.dropout(x)  
 
         x = self.fc2(x)
         x = self.batch_norm2(x)
@@ -142,7 +140,6 @@ class SurvivalHead(nn.Module):
         x = self.relu(x)
         x = self.dropout(x)
 
-        # 最后通过输出层
         risk = self.fc4(x)
 
         return risk
@@ -169,7 +166,7 @@ class FusionLayer(nn.Module):
 try:
     from torch_geometric.nn import GCNConv, global_mean_pool
 except ImportError:
-    raise ImportError("请安装 torch_geometric 库以支持 GNN 部分。")
+    raise ImportError("Please install the torch_geometric library to support the GNN part")
 
 class ProteinBranchGNN(nn.Module):
     def __init__(self, n_nodes, latent_dim):
@@ -214,7 +211,7 @@ class MultiModalSurvivalModel_GNN(nn.Module):
         return risk, fused_feature, attn_weights
 
 ########################################
-# 3. 损失函数与训练策略
+# 3. Loss Function and Training Strategy
 ########################################
 def cox_loss(risk, durations, events):
     risk = risk.squeeze()
@@ -236,7 +233,7 @@ def attention_kl_loss(attn_weights):
     return torch.mean(kl_div)
 
 ########################################
-# 4. 预训练与联合训练函数
+# 4.Pre-training and joint training functions
 ########################################
 def apply_mask(x, mask_ratio=0.2):
     mask = (torch.rand(x.shape) > mask_ratio).float().to(x.device)
@@ -292,56 +289,49 @@ def train_joint(model, dataloader, optimizer, num_epochs=10, device='cpu', lambd
     return epoch_losses
 
 ########################################
-# 5. 构建 STRING 蛋白质网络
+# 5. Constructing STRING protein networks
 ########################################
 import numpy as np
 import torch
 
 def build_protein_edge_index(string_file, protein_file, score_threshold=0.95):
-    # 读取蛋白质数据
+    
     df_protein = pd.read_csv(protein_file, sep='\t', index_col=0).T
     protein_names = list(df_protein.columns)
     protein_to_idx = {protein: idx for idx, protein in enumerate(protein_names)}
 
-    # 读取STRING数据
     df_string = pd.read_csv(string_file, sep='\t')
 
-    # 筛选符合阈值的蛋白质交互数据
     df_string_filtered = df_string[df_string['combined_score'] >= score_threshold].copy()
-    print(f"Filtered edges count: {len(df_string_filtered)}")  # 输出筛选后的边数
+    print(f"Filtered edges count: {len(df_string_filtered)}")
 
     if len(df_string_filtered) == 0:
         print("No edges found after filtering with the given score threshold!")
-        return torch.tensor([[], []], dtype=torch.long)  # 如果没有边，返回空的edge_index
+        return torch.tensor([[], []], dtype=torch.long)  
 
-    # 映射蛋白质名到索引
     def map_protein(prot):
         return protein_to_idx.get(prot, None)
 
     df_string_filtered['idx1'] = df_string_filtered['node1'].apply(map_protein)
     df_string_filtered['idx2'] = df_string_filtered['node2'].apply(map_protein)
 
-    # 去掉没有匹配到的蛋白质数据
     df_string_filtered = df_string_filtered.dropna(subset=['idx1', 'idx2'])
     print(f"Valid edges count after removing unmapped proteins: {len(df_string_filtered)}")
 
-    # 确保索引是整数
     df_string_filtered['idx1'] = df_string_filtered['idx1'].astype(int)
     df_string_filtered['idx2'] = df_string_filtered['idx2'].astype(int)
 
-    # 构建 edge_index
     edge_index = torch.tensor(df_string_filtered[['idx1', 'idx2']].values.T, dtype=torch.long)
 
-    # 对边进行排序并去重
     sorted_edges = np.sort(edge_index.cpu().numpy(), axis=0)
     sorted_edges = np.unique(sorted_edges, axis=1)
     edge_index = torch.tensor(sorted_edges, dtype=torch.long)
 
-    print(f"Final edge_index shape: {edge_index.shape}")  # 输出最终的 edge_index 形状
+    print(f"Final edge_index shape: {edge_index.shape}") 
     return edge_index
 
 ########################################
-# 6. 单独亚型热图函数：保留横坐标（融合特征名称）但只显示部分标签
+# 6. Subtype heatmap function
 ########################################
 
 def plot_subtype_heatmaps(fusion_features_df, k, output_dir="subtype_heatmaps"):
@@ -350,7 +340,6 @@ def plot_subtype_heatmaps(fusion_features_df, k, output_dir="subtype_heatmaps"):
 
     cluster_values = sorted(fusion_features_df["Cluster"].unique())
 
-    # 聚类特定热图生成（同之前的代码逻辑）
     for cluster_id in cluster_values:
         cluster_data = fusion_features_df[fusion_features_df["Cluster"] == cluster_id].drop("Cluster", axis=1)
         if cluster_data.empty:
@@ -358,12 +347,11 @@ def plot_subtype_heatmaps(fusion_features_df, k, output_dir="subtype_heatmaps"):
         plt.figure(figsize=(10, 6), dpi=600)
 
         ax = sns.heatmap(cluster_data, cmap="RdBu_r", cbar=True,
-                         xticklabels=True,  # 显示列名称
-                         yticklabels=True)  # 显示行名称
+                         xticklabels=True,  
+                         yticklabels=True) 
 
-        # 去除坐标轴的刻度
-        ax.set_xticks([])  # 去除横坐标刻度
-        ax.set_yticks([])  # 去除纵坐标刻度
+        ax.set_xticks([])  
+        ax.set_yticks([])  
 
         plt.title(f"Subtype Heatmap: Cluster {cluster_id} (k={k})", loc='center', fontsize=14)
         plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
@@ -374,21 +362,18 @@ def plot_subtype_heatmaps(fusion_features_df, k, output_dir="subtype_heatmaps"):
         plt.close()
         print(f"[Subtype Heatmap] Cluster={cluster_id}, saved to {heatmap_file}")
 
-    # 融合特征热图（隐藏底部特征标签，并显示聚类样本）
     plt.figure(figsize=(12, 8), dpi=600)
     fusion_data = fusion_features_df.drop("Cluster", axis=1)
 
-    # 聚类标签在左侧显示样本
     fusion_data['Cluster'] = fusion_features_df['Cluster']
-    fusion_data = fusion_data.set_index('Cluster')  # 设置聚类标签为行索引
+    fusion_data = fusion_data.set_index('Cluster')  
 
     ax = sns.heatmap(fusion_data, cmap="RdBu_r", cbar=True,
-                     xticklabels=False,  # 隐藏底部的特征标签
-                     yticklabels=True)  # 显示左边的样本聚类标签
+                     xticklabels=False,
+                     yticklabels=True)  
 
-    # 去除坐标轴的刻度
-    ax.set_xticks([])  # 去除横坐标刻度
-    ax.set_yticks([])  # 去除纵坐标刻度
+    ax.set_xticks([])  
+    ax.set_yticks([])  
 
     plt.title("Fusion Features Heatmap", loc='center', fontsize=18)
     plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
@@ -401,7 +386,7 @@ def plot_subtype_heatmaps(fusion_features_df, k, output_dir="subtype_heatmaps"):
 
 
 ########################################
-# 7. 保存聚类指标与生存分析结果，并绘制折线图（2行布局，下行2个图拉宽居中）
+# 7. Clustering indicators and survival analysis results
 ########################################
 
 import os
@@ -436,35 +421,26 @@ def save_clustering_and_survival_results(fusion_features, data_df, sample_ids, c
         if not os.path.exists(k_survival_dir):
             os.makedirs(k_survival_dir)
 
-        # 聚类
         kmeans = KMeans(n_clusters=k, random_state=42)
         cluster_labels = kmeans.fit_predict(fusion_features)
-
-        # 计算聚类评估指标
+        
         sil_score = silhouette_score(fusion_features, cluster_labels)
         ch_score = calinski_harabasz_score(fusion_features, cluster_labels)
 
-        # 使用融合特征进行生存分析（直接使用所有特征）
-        # 假设 fusion_features 是一个二维数组（每个样本有多个特征）
-        fusion_features_df = pd.DataFrame(fusion_features)  # 将融合特征转为DataFrame
+        fusion_features_df = pd.DataFrame(fusion_features)  
 
-        # 将所有融合特征添加到df_cox中
         df_cox = data_df[["OS.time", "OS"]].copy()
-        # 这里我们直接使用所有特征，假设fusion_features是二维数组，每一列代表一个特征
         for i in range(fusion_features_df.shape[1]):
-            df_cox[f"Feature_{i}"] = fusion_features_df.iloc[:, i]  # 将每个特征加入到DataFrame中
+            df_cox[f"Feature_{i}"] = fusion_features_df.iloc[:, i]  
 
-        # 创建Cox比例风险模型
         cph = CoxPHFitter(penalizer=1)
         cph.fit(df_cox, duration_col="OS.time", event_col="OS", show_progress=True)
 
-        # 获取Cox回归结果
         concordance = cph.concordance_index_
         partial_aic = cph.AIC_partial_
         lrt = cph.log_likelihood_ratio_test()
         lrt_pvalue = lrt.p_value
 
-        # 保存当前k值下的各项指标
         overall_metrics["k"].append(k)
         overall_metrics["concordance"].append(concordance)
         overall_metrics["partial_aic"].append(partial_aic)
@@ -472,7 +448,6 @@ def save_clustering_and_survival_results(fusion_features, data_df, sample_ids, c
         overall_metrics["silhouette"].append(sil_score)
         overall_metrics["calinski_harabasz"].append(ch_score)
 
-        # 保存聚类指标和生存分析结果
         metrics_file = os.path.join(k_metric_dir, "clustering_metrics.txt")
         with open(metrics_file, "w") as f:
             f.write(f"k: {k}\n")
@@ -483,20 +458,17 @@ def save_clustering_and_survival_results(fusion_features, data_df, sample_ids, c
             f.write(f"Calinski Harabasz Index: {ch_score:.4f}\n")
         print(f"Clustering metrics saved for k={k} in {metrics_file}")
 
-        # 保存当前 k 的融合特征与聚类标签
         fusion_df_k = pd.DataFrame(fusion_features, index=sample_ids)
         fusion_df_k["Cluster"] = cluster_labels
 
-        # 单独亚型热图（保留横坐标但只显示部分标签）
         subtype_dir = os.path.join(k_metric_dir, "subtype_heatmaps")
         plot_subtype_heatmaps(fusion_df_k, k=k, output_dir=subtype_dir)
 
-        # 融合特征热图：隐藏底部特征标签（1到128）并显示不同聚类的样本
         fusion_sorted = fusion_df_k.sort_values("Cluster")
         data_to_plot = fusion_sorted.drop("Cluster", axis=1)
         plt.figure(figsize=(12, 8), dpi=600)
         sns.heatmap(data_to_plot, cmap="RdBu_r", cbar=True,
-                    yticklabels=fusion_sorted["Cluster"], xticklabels=False)  # 隐藏特征标签，显示聚类标签
+                    yticklabels=fusion_sorted["Cluster"], xticklabels=False)  
         plt.title(f"Fusion Features Heatmap (k = {k})", loc='center', fontsize=18)
         plt.xlabel("Fusion Features", fontsize=16)
         plt.ylabel("Samples", fontsize=16)
@@ -505,7 +477,6 @@ def save_clustering_and_survival_results(fusion_features, data_df, sample_ids, c
         plt.close()
         print(f"Overall Heatmap for k={k} saved to {heatmap_file}")
         plt.rcParams['font.family'] = 'Times New Roman'
-        # Kaplan-Meier 生存曲线
         data_df_k = data_df.copy()
         data_df_k["Cluster"] = cluster_labels
         kmf = KaplanMeierFitter()
@@ -527,7 +498,6 @@ def save_clustering_and_survival_results(fusion_features, data_df, sample_ids, c
         plt.close()
         print(f"Kaplan-Meier curves saved for k={k} in {km_file}")
 
-        # Log-rank 检验
         logrank_file = os.path.join(k_survival_dir, "logrank_tests.txt")
         with open(logrank_file, "w") as f:
             for c1, c2 in combinations(cluster_values, 2):
@@ -541,17 +511,14 @@ def save_clustering_and_survival_results(fusion_features, data_df, sample_ids, c
     overall_metrics_df = pd.DataFrame(overall_metrics)
     overall_metrics_df.to_csv(os.path.join(output_dir_metrics, "overall_clustering_metrics.csv"), index=False)
 
-    # 绘制 5 个指标折线图（2 行布局）
     fig = plt.figure(figsize=(18, 10), dpi=600)
     outer_grid = gridspec.GridSpec(2, 1, height_ratios=[1, 1])
 
-    # 第一行：3 个子图
     top_grid = gridspec.GridSpecFromSubplotSpec(1, 3, subplot_spec=outer_grid[0])
     axA = fig.add_subplot(top_grid[0])
     axB = fig.add_subplot(top_grid[1])
     axC = fig.add_subplot(top_grid[2])
 
-    # 第二行：2 个子图均分整行
     bottom_grid = gridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=outer_grid[1])
     axD = fig.add_subplot(bottom_grid[0])
     axE = fig.add_subplot(bottom_grid[1])
@@ -576,11 +543,10 @@ def save_clustering_and_survival_results(fusion_features, data_df, sample_ids, c
     print(f"Overall metrics line plots saved as {metrics_line_file}")
 
 ########################################
-# 7. 主流程
+# 7. Main Process
 ########################################
 
 if __name__ == "__main__":
-    # 修改为实际文件路径
     mirna_file = "mirna_standardized.tsv"
     protein_file = "protein_standardized.tsv"
     star_tpm_file = "star_tpm_standardized.tsv"
@@ -593,23 +559,20 @@ if __name__ == "__main__":
 
     input_dims = {'mirna': 1881, 'protein': 487, 'star_tpm': 6809}
     latent_dim = 128
-    device = 'cpu'  # 如有 GPU, 改为 'cuda'
+    device = 'cpu'  # If you have a GPU, change to 'cuda'
     n_protein_nodes = 487
 
-    # 构建 STRING 网络
     protein_edge_index = build_protein_edge_index(string_file, protein_file, score_threshold=0.8)
     protein_edge_index = protein_edge_index.to(device)
-    print("真实蛋白质网络 edge_index 形状：", protein_edge_index.shape)
+    print("Real protein network edge_index shape：", protein_edge_index.shape)
 
     visualize_protein_network(protein_edge_index, n_protein_nodes)
 
-    # 预训练自编码器
     autoencoder_mirna = OmicsAutoencoder(input_dims['mirna'], latent_dim)
     autoencoder_star_tpm = OmicsAutoencoder(input_dims['star_tpm'], latent_dim)
     pretrain_autoencoder(autoencoder_mirna, 'mirna', dataloader, device, num_epochs=20, lr=1e-3)
     pretrain_autoencoder(autoencoder_star_tpm, 'star_tpm', dataloader, device, num_epochs=20, lr=1e-3)
 
-    # 构建多模态模型并复制预训练参数
     model = MultiModalSurvivalModel_GNN(input_dims, latent_dim, n_protein_nodes)
     model.mirna_encoder[0].weight.data = autoencoder_mirna.encoder[0].weight.data.clone()
     model.mirna_encoder[0].bias.data = autoencoder_mirna.encoder[0].bias.data.clone()
@@ -633,7 +596,6 @@ if __name__ == "__main__":
     plt.savefig("joint_training_loss.png", dpi=600, bbox_inches='tight')
     plt.show()
 
-    # 提取融合特征
     model.eval()
     fusion_features = []
     all_attn = []
@@ -656,7 +618,6 @@ if __name__ == "__main__":
     fusion_features_df.to_csv("fusion_features.csv")
     print("Fusion features saved to fusion_features.csv")
 
-    # 平均融合特征热图，横坐标只显示部分标签
     avg_features = fusion_features_df.drop("Cluster", axis=1).groupby(fusion_features_df["Cluster"]).mean()
     plt.figure(figsize=(8, 6), dpi=600)
     sns.heatmap(avg_features, cmap="RdBu_r", cbar=True,
@@ -667,7 +628,6 @@ if __name__ == "__main__":
     plt.savefig("average_fusion_features_heatmap.png", dpi=600, bbox_inches='tight')
     plt.show()
 
-    # 构造 data_df：合并 clinical 与 survival 数据，仅保留 dataset.sample_ids
     clinical_df = pd.read_csv("clinical.tsv", sep='\t', index_col=0)
     survival_df = pd.read_csv("survival.tsv", sep='\t', index_col=0)
     clinical_df = clinical_df.sort_index()
@@ -680,22 +640,18 @@ if __name__ == "__main__":
     save_clustering_and_survival_results(fusion_features, data_df, dataset.sample_ids,
                                          cluster_numbers=list(range(2, 11)))
 
-    # SHAP 解释
     def survival_head_wrapper(x):
         x_tensor = torch.tensor(x, dtype=torch.float32).to(device)
         with torch.no_grad():
             out = model.survival_head(x_tensor)
         return out.cpu().numpy()
 
-
     fused_tensor = torch.tensor(fusion_features, dtype=torch.float32).to(device)
 
-    # 用于SHAP解释的masker
     masker = shap.maskers.Independent(fused_tensor.cpu().numpy())
     explainer = shap.Explainer(survival_head_wrapper, masker)
     shap_values = explainer(fused_tensor.cpu().numpy())
 
-    # 绘制SHAP Summary Plot
     plt.figure(dpi=600)
     shap.summary_plot(shap_values, fused_tensor.cpu().numpy(),
                       feature_names=[f"F{i}" for i in range(fused_tensor.shape[1])],
@@ -705,33 +661,25 @@ if __name__ == "__main__":
     plt.close()
     print("SHAP summary plot saved as shap_summary.png")
 
-    # 修改后的注意力权重图
     all_attn = np.concatenate(all_attn, axis=0)
     avg_attn = np.mean(all_attn, axis=0).squeeze()
 
-    # 创建图表
     plt.figure(figsize=(6, 4), dpi=600)
 
-    # 使用自定义的颜色调色板
     colors = sns.color_palette("Set2", n_colors=len(avg_attn))
 
-    # 绘制条形图，并替换数字索引为具体的模态标签
     ax = sns.barplot(x=np.arange(len(avg_attn)), y=avg_attn, hue=np.arange(len(avg_attn)), palette=colors)
 
-    # 去除图例
     ax.legend_.remove()
 
-    # 设置x轴标签为 "miRNA", "Protein", "mRNA"
     modality_labels = ['miRNA', 'Protein', 'mRNA']
-    ax.set_xticks(np.arange(len(avg_attn)))  # 设置x轴位置
-    ax.set_xticklabels(modality_labels[:len(avg_attn)])  # 设置对应的标签
+    ax.set_xticks(np.arange(len(avg_attn))) 
+    ax.set_xticklabels(modality_labels[:len(avg_attn)]) 
 
-    # 设置标签
     plt.xlabel("Modality", fontsize=12)
     plt.ylabel("Average Attention Weight", fontsize=12)
     plt.title("Average Attention Weight per Modality", loc='center', fontsize=14)
 
-    # 保存图像
     plt.savefig("attention_weights.png", dpi=600, bbox_inches='tight')
     plt.close()
     print("Attention weights plot saved as attention_weights.png")
